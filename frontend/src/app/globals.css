@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gray-950 text-gray-100 antialiased;
+  }
+}
+
+/* Markdown output styles */
+.prose-dark h1, .prose-dark h2, .prose-dark h3 {
+  @apply text-white font-semibold mt-4 mb-2;
+}
+.prose-dark h1 { @apply text-xl; }
+.prose-dark h2 { @apply text-lg; }
+.prose-dark h3 { @apply text-base; }
+.prose-dark p { @apply text-gray-300 leading-relaxed mb-3; }
+.prose-dark ul { @apply list-disc list-inside text-gray-300 mb-3 space-y-1; }
+.prose-dark ol { @apply list-decimal list-inside text-gray-300 mb-3 space-y-1; }
+.prose-dark code { @apply bg-gray-800 text-emerald-400 px-1.5 py-0.5 rounded text-sm font-mono; }
+.prose-dark pre { @apply bg-gray-900 border border-gray-700 rounded-lg p-4 overflow-x-auto mb-3; }
+.prose-dark pre code { @apply bg-transparent p-0 text-gray-200; }
+.prose-dark table { @apply w-full border-collapse text-sm mb-4; }
+.prose-dark th { @apply bg-gray-800 text-gray-200 px-3 py-2 text-left border border-gray-700; }
+.prose-dark td { @apply px-3 py-2 border border-gray-800 text-gray-300; }
+.prose-dark blockquote { @apply border-l-2 border-emerald-500 pl-4 text-gray-400 italic; }
+.prose-dark strong { @apply text-white font-semibold; }
+.prose-dark a { @apply text-emerald-400 underline; }
