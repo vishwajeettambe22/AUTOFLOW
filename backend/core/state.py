@@ -39,6 +39,7 @@ class AutoFlowState(TypedDict):
     # Input
     run_id: str
     user_task: str
+    task_complexity: str
     
     # Planner output
     subtasks: List[SubTask]
@@ -55,11 +56,17 @@ class AutoFlowState(TypedDict):
     critic_findings: Annotated[List[CriticFinding], operator.add]
     researcher_retry_count: int
     coder_retry_count: int
+    critic_iterations: int
     total_iterations: int
     
     # Status tracking (streamed to frontend)
-    current_agent: str
-    agent_statuses: dict  # agent_name -> AgentStatus
+    next_retry_agent: Optional[str]
+    planner_status: AgentStatus
+    researcher_status: AgentStatus
+    coder_status: AgentStatus
+    reviewer_status: AgentStatus
+    critic_status: AgentStatus
+    reporter_status: AgentStatus
     
     # Cost tracking
     token_usage: Annotated[List[AgentTokenUsage], operator.add]

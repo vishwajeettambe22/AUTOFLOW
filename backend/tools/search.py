@@ -1,7 +1,11 @@
 import httpx
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
 import structlog
+
+try:
+    from ddgs import DDGS
+except ImportError:
+    from duckduckgo_search import DDGS
 
 log = structlog.get_logger()
 
@@ -26,7 +30,7 @@ async def web_search(query: str) -> str:
 
         if not results:
             log.warning("web_search_empty", query=query)
-            return ""
+            return "No search results found for the query."
 
         formatted = []
         for i, r in enumerate(results, 1):
@@ -38,7 +42,7 @@ async def web_search(query: str) -> str:
 
     except Exception as e:
         log.error("web_search_failed", query=query, error=str(e))
-        return ""
+        return f"Search failed due to an error: {str(e)}"
 
 
 async def fetch_page(url: str) -> str:

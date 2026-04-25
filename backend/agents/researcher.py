@@ -36,7 +36,7 @@ async def researcher_agent(state: AutoFlowState) -> dict:
         await events.emit_agent_done(run_id, "researcher", "skipped")
         return {
             "research_output": "No research tasks assigned.",
-            "agent_statuses": {**state.get("agent_statuses", {}), "researcher": AgentStatus.SKIPPED},
+            "researcher_status": AgentStatus.SKIPPED,
         }
 
     # Build search query from task descriptions
@@ -54,7 +54,7 @@ async def researcher_agent(state: AutoFlowState) -> dict:
             "research_output": "",
             "last_error": "Web search returned no results",
             "researcher_retry_count": state.get("researcher_retry_count", 0),
-            "agent_statuses": {**state.get("agent_statuses", {}), "researcher": AgentStatus.FAILED},
+            "researcher_status": AgentStatus.FAILED,
         }
 
     user_prompt = f"""Original user task: {state['user_task']}
@@ -69,12 +69,15 @@ Please produce comprehensive research notes addressing the subtasks above.
 """
 
     try:
-        response, usage = await call_llm_tracked(
+        response, usage, success = await call_llm_tracked(
             agent_name="researcher",
             model=settings.RESEARCHER_MODEL,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
+
+        if not success or not response.strip():
+            raise ValueError("LLM call failed or returned empty response")
 
         await events.emit_agent_output(run_id, "researcher", response[:500] + "...")
         await events.emit_agent_done(run_id, "researcher", "success")
@@ -91,8 +94,7 @@ Please produce comprehensive research notes addressing the subtasks above.
         return {
             "research_output": response,
             "subtasks": updated,
-            "current_agent": "coder",
-            "agent_statuses": {**state.get("agent_statuses", {}), "researcher": AgentStatus.SUCCESS},
+            "researcher_status": AgentStatus.SUCCESS,
             "token_usage": [usage],
         }
 
@@ -102,5 +104,5 @@ Please produce comprehensive research notes addressing the subtasks above.
         return {
             "research_output": "",
             "last_error": f"Researcher LLM call failed: {str(e)}",
-            "agent_statuses": {**state.get("agent_statuses", {}), "researcher": AgentStatus.FAILED},
+            "researcher_status": AgentStatus.FAILED,
         }

@@ -48,12 +48,15 @@ Please synthesize this into a comprehensive final response.
 """
 
     try:
-        response, usage = await call_llm_tracked(
+        response, usage, success = await call_llm_tracked(
             agent_name="reporter",
             model=settings.REPORTER_MODEL,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
+
+        if not success or not response.strip():
+            raise ValueError("LLM call failed or returned empty response")
 
         total_cost += usage.get("cost_usd", 0)
 
@@ -65,8 +68,7 @@ Please synthesize this into a comprehensive final response.
         return {
             "final_report": response,
             "total_cost_usd": total_cost,
-            "current_agent": "done",
-            "agent_statuses": {**state.get("agent_statuses", {}), "reporter": AgentStatus.SUCCESS},
+            "reporter_status": AgentStatus.SUCCESS,
             "token_usage": [usage],
         }
 
@@ -77,5 +79,5 @@ Please synthesize this into a comprehensive final response.
             "final_report": state.get("code_output", ""),  # Fallback to coder output
             "total_cost_usd": total_cost,
             "last_error": f"Reporter failed: {str(e)}",
-            "agent_statuses": {**state.get("agent_statuses", {}), "reporter": AgentStatus.FAILED},
+            "reporter_status": AgentStatus.FAILED,
         }

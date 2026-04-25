@@ -73,17 +73,26 @@ async def execute_workflow(run_id: str, user_task: str):
         researcher_retry_count=0,
         coder_retry_count=0,
         total_iterations=0,
-        current_agent="planner",
-        agent_statuses={"planner": AgentStatus.PENDING},
+        next_retry_agent=None,
+        planner_status=AgentStatus.PENDING,
+        researcher_status=AgentStatus.PENDING,
+        coder_status=AgentStatus.PENDING,
+        reviewer_status=AgentStatus.PENDING,
+        critic_status=AgentStatus.PENDING,
+        reporter_status=AgentStatus.PENDING,
         token_usage=[],
         total_cost_usd=0.0,
         last_error=None,
     )
 
     try:
-        compiled_workflow = workflow.compile()
-        final_state = await compiled_workflow.ainvoke(initial_state)  
-        await set_run_status(run_id, "success")
+        final_state = await workflow.ainvoke(initial_state)  
+        
+        if not final_state.get("final_report") or final_state.get("last_error"):
+            await set_run_status(run_id, "failed")
+        else:
+            await set_run_status(run_id, "success")
+            
         await set_run_state(run_id, {k: v for k, v in final_state.items() if k != "token_usage"})
         await save_run(final_state)
         return final_state

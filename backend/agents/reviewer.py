@@ -51,12 +51,15 @@ Review the coder's output now.
 """
 
     try:
-        response, usage = await call_llm_tracked(
+        response, usage, success = await call_llm_tracked(
             agent_name="reviewer",
             model=settings.REVIEWER_MODEL,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
+
+        if not success or not response.strip():
+            raise ValueError("LLM call failed or returned empty response")
 
         raw = response.strip()
         if raw.startswith("```"):
@@ -76,8 +79,7 @@ Review the coder's output now.
         result = {
             "review_output": json.dumps(parsed, indent=2),
             "review_passed": passed,
-            "current_agent": "reporter" if passed else "critic",
-            "agent_statuses": {**state.get("agent_statuses", {}), "reviewer": AgentStatus.SUCCESS},
+            "reviewer_status": AgentStatus.SUCCESS,
             "token_usage": [usage],
         }
 
@@ -93,5 +95,5 @@ Review the coder's output now.
             "review_output": "",
             "review_passed": False,
             "last_error": f"Reviewer failed: {str(e)}",
-            "agent_statuses": {**state.get("agent_statuses", {}), "reviewer": AgentStatus.FAILED},
+            "reviewer_status": AgentStatus.FAILED,
         }

@@ -16,6 +16,7 @@ The agents available are: researcher, coder, reviewer.
 
 Output ONLY valid JSON in this exact format:
 {
+  "task_complexity": "simple" | "complex",
   "plan_summary": "One sentence describing the overall approach",
   "subtasks": [
     {"id": "t1", "description": "...", "assigned_to": "researcher"},
@@ -30,6 +31,7 @@ Rules:
 - coder: write code, generate structured documents, create tables
 - reviewer: verify correctness, check completeness
 - No more than 5 subtasks total
+- Set task_complexity to "simple" for straightforward tasks, or "complex" if they require multiple iterations or deep review.
 """
 
 
@@ -56,12 +58,15 @@ Adjust the plan to address this failure.
 """
 
     try:
-        response, usage = await call_llm_tracked(
+        response, usage, success = await call_llm_tracked(
             agent_name="planner",
             model=settings.PLANNER_MODEL,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
+
+        if not success or not response.strip():
+            raise ValueError("LLM call failed or returned empty response")
 
         # Parse JSON response
         raw = response.strip()
@@ -87,9 +92,9 @@ Adjust the plan to address this failure.
 
         return {
             "subtasks": subtasks,
-            "plan_summary": parsed["plan_summary"],
-            "current_agent": "researcher",
-            "agent_statuses": {**state.get("agent_statuses", {}), "planner": AgentStatus.SUCCESS},
+            "plan_summary": parsed.get("plan_summary", ""),
+            "task_complexity": parsed.get("task_complexity", "complex").lower(),
+            "planner_status": AgentStatus.SUCCESS,
             "token_usage": [usage],
         }
 
@@ -98,5 +103,5 @@ Adjust the plan to address this failure.
         await events.emit_agent_done(run_id, "planner", "failed")
         return {
             "last_error": f"Planner failed: {str(e)}",
-            "agent_statuses": {**state.get("agent_statuses", {}), "planner": AgentStatus.FAILED},
+            "planner_status": AgentStatus.FAILED,
         }

@@ -34,7 +34,7 @@ async def coder_agent(state: AutoFlowState) -> dict:
         await events.emit_agent_done(run_id, "coder", "skipped")
         return {
             "code_output": "No coder tasks assigned.",
-            "agent_statuses": {**state.get("agent_statuses", {}), "coder": AgentStatus.SKIPPED},
+            "coder_status": AgentStatus.SKIPPED,
         }
 
     task_text = "\n".join(f"- {t['description']}" for t in coder_tasks)
@@ -64,12 +64,15 @@ Produce the requested output now.
 """
 
     try:
-        response, usage = await call_llm_tracked(
+        response, usage, success = await call_llm_tracked(
             agent_name="coder",
             model=settings.CODER_MODEL,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
+
+        if not success or not response.strip():
+            raise ValueError("LLM call failed or returned empty response")
 
         # Check for executable code blocks and run them
         exec_result = None
@@ -98,8 +101,7 @@ Produce the requested output now.
         return {
             "code_output": response,
             "subtasks": updated,
-            "current_agent": "reviewer",
-            "agent_statuses": {**state.get("agent_statuses", {}), "coder": AgentStatus.SUCCESS},
+            "coder_status": AgentStatus.SUCCESS,
             "token_usage": [usage],
         }
 
@@ -109,5 +111,5 @@ Produce the requested output now.
         return {
             "code_output": "",
             "last_error": f"Coder failed: {str(e)}",
-            "agent_statuses": {**state.get("agent_statuses", {}), "coder": AgentStatus.FAILED},
+            "coder_status": AgentStatus.FAILED,
         }

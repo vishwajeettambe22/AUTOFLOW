@@ -75,12 +75,15 @@ Analyze the failure and prescribe a fix.
 """
 
     try:
-        response, usage = await call_llm_tracked(
+        response, usage, success = await call_llm_tracked(
             agent_name="critic",
             model=settings.CRITIC_MODEL,
             system_prompt=SYSTEM_PROMPT,
             user_prompt=user_prompt,
         )
+
+        if not success or not response.strip():
+            raise ValueError("LLM call failed or returned empty response")
 
         raw = response.strip()
         if raw.startswith("```"):
@@ -108,8 +111,8 @@ Analyze the failure and prescribe a fix.
         result = {
             "critic_findings": [finding],
             "total_iterations": total_iterations,
-            "current_agent": retry_target,
-            "agent_statuses": {**state.get("agent_statuses", {}), "critic": AgentStatus.SUCCESS},
+            "next_retry_agent": retry_target,
+            "critic_status": AgentStatus.SUCCESS,
             "token_usage": [usage],
             "last_error": None,
         }
@@ -133,5 +136,5 @@ Analyze the failure and prescribe a fix.
         return {
             "total_iterations": total_iterations,
             "last_error": f"Critic failed: {str(e)}",
-            "agent_statuses": {**state.get("agent_statuses", {}), "critic": AgentStatus.FAILED},
+            "critic_status": AgentStatus.FAILED,
         }
