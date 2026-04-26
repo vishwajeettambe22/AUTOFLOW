@@ -13,6 +13,9 @@ from .state import AgentTokenUsage
 
 log = structlog.get_logger()
 
+# Markers that indicate a quota/rate-limit error in the response content
+QUOTA_ERROR_MARKERS = ["quota reached", "try again later", "resource exhausted", "rate limit"]
+
 
 def get_llm(model: Optional[str] = None, temperature: float = 0.1) -> Any:
     provider = settings.DEFAULT_LLM_PROVIDER.lower()
@@ -45,7 +48,13 @@ def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * rates["input"] + output_tokens * rates["output"]) / 1_000_000
 
 
-async def call_gemini(system_prompt: str, user_prompt: str, model_name: str, temperature: float = 0.1) -> tuple[str, int, int, bool]:
+def _is_quota_error(text: str) -> bool:
+    """Check if response text indicates a quota/rate-limit error."""
+    lower = text.lower()
+    return any(marker in lower for marker in QUOTA_ERROR_MARKERS)
+
+
+async def call_gemini(system_prompt: str, user_prompt: str, model_name: str, temperature: float = 0.7) -> tuple[str, int, int, bool]:
     content = ""
     input_tokens = 0
     output_tokens = 0
@@ -55,35 +64,55 @@ async def call_gemini(system_prompt: str, user_prompt: str, model_name: str, tem
         try:
             response = await client.aio.models.generate_content(
                 model=model_name,
-                contents=user_prompt,
-                config=genai.types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=temperature
-                )
+                contents=user_prompt,  # Only user prompt as content
+                config={
+                    "system_instruction": system_prompt,  # System prompt goes here only
+                    "temperature": temperature,
+                    "max_output_tokens": 8192
+                }
             )
             
             if hasattr(response, "usage_metadata") and response.usage_metadata:
-                input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0)
-                output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0)
+                input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+                output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
                 
+            log.info("gemini_raw_response", 
+                      has_candidates=bool(response.candidates),
+                      input_tokens=input_tokens, 
+                      output_tokens=output_tokens)
             try:
-                content = response.text
+                if response.candidates and response.candidates[0].content.parts:
+                    content = "".join([
+                        part.text for part in response.candidates[0].content.parts
+                        if hasattr(part, "text")
+                    ])
+                else:
+                    content = ""
+                
+                if not content:
+                    content = str(response)
             except Exception:
-                # Handle cases where response.text throws an exception (e.g., safety blocked)
-                content = ""
+                # Handle cases where response parsing throws an exception
+                content = str(response)
                 
             break  # Success or safety block, break out of loop
             
         except Exception as e:
-            if attempt < 2:
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str or "resource" in err_str:
+                log.warning("gemini_quota_exhausted", attempt=attempt+1, error=str(e))
+                content = "Quota reached. Try again later."
+                break
+            if attempt < 2:  # Retry on all 3 attempts, not just the first
                 delay = (2 ** attempt) * 5
                 log.warning("gemini_retry_backoff", attempt=attempt+1, delay=delay, error=str(e))
                 await asyncio.sleep(delay)
                 continue
             log.error("gemini_call_failed", error=str(e))
             break
-            
-    success = bool(content.strip())
+    
+    # Properly detect quota errors in the content
+    success = bool(content.strip()) and not _is_quota_error(content)
     return content, input_tokens, output_tokens, success
 
 async def call_llm_tracked(
@@ -91,7 +120,7 @@ async def call_llm_tracked(
     model: str,
     system_prompt: str,
     user_prompt: str,
-    temperature: float = 0.1,
+    temperature: float = 0.7,
 ) -> tuple[str, AgentTokenUsage, bool]:
     """
     Call LLM and return (response_text, token_usage).
@@ -137,7 +166,7 @@ async def call_llm_tracked(
             else:
                 content = str(raw_content) if raw_content is not None else ""
             
-            success = bool(content.strip())
+            success = bool(content.strip()) and not _is_quota_error(content)
                 
     except Exception as e:
         log.error("llm_call_failed", agent=agent_name, provider=provider, error=str(e))

@@ -5,8 +5,36 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 import structlog
 
 from core.config import settings
+from core.llm import _is_quota_error
 
 log = structlog.get_logger()
+
+
+def _determine_run_status(state: dict) -> str:
+    """Determine the actual run status from the final state."""
+    final_report = state.get("final_report", "")
+    last_error = state.get("last_error")
+    
+    # No report at all
+    if not final_report or not final_report.strip():
+        return "failed"
+    
+    # Report is actually a quota/rate-limit error
+    if _is_quota_error(final_report):
+        return "failed"
+    
+    # An explicit error was recorded
+    if last_error:
+        return "failed"
+    
+    # Check agent statuses
+    from core.state import AgentStatus
+    if state.get("researcher_status") == AgentStatus.FAILED:
+        return "failed"
+    if state.get("reporter_status") == AgentStatus.FAILED:
+        return "failed"
+    
+    return "success"
 
 
 class Base(DeclarativeBase):
@@ -87,7 +115,7 @@ async def save_run(state: dict):
         user_task=state["user_task"],
         plan_summary=state.get("plan_summary", ""),
         final_report=state.get("final_report", ""),
-        status="success" if state.get("final_report") else "failed",
+        status=_determine_run_status(state),
         total_cost_usd=state.get("total_cost_usd", 0),
         planner_cost=agent_costs.get("planner", 0),
         researcher_cost=agent_costs.get("researcher", 0),
@@ -109,3 +137,12 @@ async def save_run(state: dict):
         await session.commit()
 
     log.info("run_saved", run_id=state["run_id"], cost=round(state.get("total_cost_usd", 0), 4))
+
+
+async def get_run_by_id(run_id: str):
+    """Retrieve a run from PostgreSQL by its ID."""
+    factory = get_session_factory()
+    async with factory() as session:
+        from sqlalchemy import select
+        result = await session.execute(select(Run).where(Run.id == run_id))
+        return result.scalar_one_or_none()

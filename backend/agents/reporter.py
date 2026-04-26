@@ -2,23 +2,16 @@ import structlog
 
 from core.config import settings
 from core.state import AutoFlowState, AgentStatus
-from core.llm import call_llm_tracked
+from core.llm import call_llm_tracked, _is_quota_error
 from core import events
 
 log = structlog.get_logger()
 
 SYSTEM_PROMPT = """You are the Reporter agent in AutoFlow.
 
-Your job: Synthesize all agent outputs into a final, polished, well-structured response.
-
-Guidelines:
-- Write in clean markdown
-- Start with an executive summary (2-3 sentences)
-- Include all key information from research and coder output
-- Organize with clear headers and sections
-- End with a "Key Takeaways" section
-- Make it immediately useful — the user should not need to read anything else
-- Preserve any code blocks, tables, or structured content from the coder
+Your job: Take raw research content and polish it into a professional, well-structured markdown report.
+You must preserve ALL information — never shorten, summarize, or omit content.
+Your output must be at least as long as the input.
 """
 
 
@@ -31,20 +24,22 @@ async def reporter_agent(state: AutoFlowState) -> dict:
     # Calculate total cost
     total_cost = sum(u.get("cost_usd", 0) for u in state.get("token_usage", []))
 
-    user_prompt = f"""Original task: {state['user_task']}
+    research_content = state.get('research_output', 'N/A')
 
-Plan: {state.get('plan_summary', '')}
+    user_prompt = f"""
+Polish and format the following research content into a clean, professional markdown report.
 
-Research findings:
-{state.get('research_output', 'N/A')[:3000]}
+RESEARCH CONTENT:
+{research_content[:4000]}
 
-Generated content/code:
-{state.get('code_output', 'N/A')[:3000]}
-
-Review summary:
-{state.get('review_output', 'N/A')[:500]}
-
-Please synthesize this into a comprehensive final response.
+FORMATTING RULES:
+- Keep ALL original information — do not remove, shorten, or summarize anything.
+- Fix any formatting issues (broken tables, inconsistent headers, etc.)
+- Ensure proper markdown syntax (headers, bold, lists, tables)
+- The output MUST be at least as long as the input content above.
+- Do NOT add new information that wasn't in the original.
+- Do NOT add meta-commentary like "here is the report" or "this document covers".
+- Start directly with the content (## Overview or similar).
 """
 
     try:
@@ -57,6 +52,10 @@ Please synthesize this into a comprehensive final response.
 
         if not success or not response.strip():
             raise ValueError("LLM call failed or returned empty response")
+
+        # Detect quota errors in the response content
+        if _is_quota_error(response):
+            raise ValueError(f"Quota error in response: {response[:100]}")
 
         total_cost += usage.get("cost_usd", 0)
 
@@ -76,7 +75,7 @@ Please synthesize this into a comprehensive final response.
         log.error("reporter_failed", run_id=run_id, error=str(e))
         await events.emit_agent_done(run_id, "reporter", "failed")
         return {
-            "final_report": state.get("code_output", ""),  # Fallback to coder output
+            "final_report": "",  # Empty report — not the error message
             "total_cost_usd": total_cost,
             "last_error": f"Reporter failed: {str(e)}",
             "reporter_status": AgentStatus.FAILED,

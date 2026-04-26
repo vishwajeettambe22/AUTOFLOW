@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +13,8 @@ from core.state import AutoFlowState, AgentStatus
 from core import events
 from graph.workflow import workflow
 from memory.redis_store import set_run_status, get_run_status, set_run_state
-from memory.postgres_store import init_db, save_run
+from memory.postgres_store import init_db, save_run, get_run_by_id
+from core.llm import _is_quota_error
 
 log = structlog.get_logger()
 
@@ -50,7 +52,23 @@ class RunTaskRequest(BaseModel):
 class RunTaskResponse(BaseModel):
     run_id: str
     status: str
-    message: str
+    final_report: str
+    total_cost_usd: float
+    total_input_tokens: int
+    total_output_tokens: int
+    error: Optional[str] = None
+
+
+class RunResultResponse(BaseModel):
+    run_id: str
+    task: str
+    status: str
+    final_report: str
+    total_cost_usd: float
+    total_input_tokens: int
+    total_output_tokens: int
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
 
 
 # ─── Core task runner ──────────────────────────────────────────────────────────
@@ -88,8 +106,15 @@ async def execute_workflow(run_id: str, user_task: str):
     try:
         final_state = await workflow.ainvoke(initial_state)  
         
-        if not final_state.get("final_report") or final_state.get("last_error"):
+        final_report = final_state.get("final_report", "")
+        has_error = final_state.get("last_error")
+        is_quota = _is_quota_error(final_report) if final_report else False
+        
+        if not final_report.strip() or has_error or is_quota:
             await set_run_status(run_id, "failed")
+            log.warning("run_marked_failed", run_id=run_id, 
+                       has_report=bool(final_report.strip()), 
+                       has_error=bool(has_error), is_quota=is_quota)
         else:
             await set_run_status(run_id, "success")
             
@@ -109,21 +134,63 @@ async def execute_workflow(run_id: str, user_task: str):
 @app.post("/api/v1/run-task", response_model=RunTaskResponse)
 async def run_task(req: RunTaskRequest):
     """
-    Kick off an AutoFlow task run.
-    Connect to WS /ws/{run_id} BEFORE calling this endpoint to receive live updates.
+    Run an AutoFlow task and return the full report.
+    This endpoint waits for the workflow to complete before responding.
     """
     if not req.task.strip():
         raise HTTPException(status_code=400, detail="Task cannot be empty")
 
     run_id = req.run_id or str(uuid.uuid4())
 
-    # Fire and forget — client receives updates via WebSocket
-    asyncio.create_task(execute_workflow(run_id, req.task.strip()))
+    try:
+        final_state = await execute_workflow(run_id, req.task.strip())
 
-    return RunTaskResponse(
-        run_id=run_id,
-        status="started",
-        message=f"Task started. Connect to /ws/{run_id} for live updates.",
+        token_usage = final_state.get("token_usage", [])
+        total_input = sum(u.get("input_tokens", 0) for u in token_usage)
+        total_output = sum(u.get("output_tokens", 0) for u in token_usage)
+
+        final_report = final_state.get("final_report", "")
+        last_error = final_state.get("last_error")
+        status = "success" if final_report.strip() and not last_error else "failed"
+
+        return RunTaskResponse(
+            run_id=run_id,
+            status=status,
+            final_report=final_report,
+            total_cost_usd=round(final_state.get("total_cost_usd", 0), 6),
+            total_input_tokens=total_input,
+            total_output_tokens=total_output,
+            error=last_error,
+        )
+    except Exception as e:
+        log.error("run_task_error", run_id=run_id, error=str(e))
+        return RunTaskResponse(
+            run_id=run_id,
+            status="failed",
+            final_report="",
+            total_cost_usd=0.0,
+            total_input_tokens=0,
+            total_output_tokens=0,
+            error=str(e),
+        )
+
+
+@app.get("/api/v1/run/{run_id}/result", response_model=RunResultResponse)
+async def get_result(run_id: str):
+    """Retrieve the full result of a completed run from the database."""
+    run = await get_run_by_id(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return RunResultResponse(
+        run_id=run.id,
+        task=run.user_task,
+        status=run.status,
+        final_report=run.final_report or "",
+        total_cost_usd=round(run.total_cost_usd or 0, 6),
+        total_input_tokens=run.total_input_tokens or 0,
+        total_output_tokens=run.total_output_tokens or 0,
+        created_at=str(run.created_at) if run.created_at else None,
+        completed_at=str(run.completed_at) if run.completed_at else None,
     )
 
 

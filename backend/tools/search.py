@@ -16,29 +16,32 @@ MAX_CONTENT_CHARS = 3000
 async def web_search(query: str) -> str:
     """
     Search the web using DuckDuckGo and return summarized results.
-    Returns empty string on failure (Critic will handle it).
+    Returns formatted string or fallback message on failure.
     """
     try:
-        results = []
+        raw_results = []
         with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=MAX_RESULTS):
-                results.append({
-                    "title": r.get("title", ""),
-                    "url": r.get("href", ""),
-                    "snippet": r.get("body", ""),
-                })
+            raw_results = list(ddgs.text(query, max_results=MAX_RESULTS))
 
-        if not results:
+        if not raw_results:
             log.warning("web_search_empty", query=query)
             return "No search results found for the query."
 
-        formatted = []
-        for i, r in enumerate(results, 1):
-            formatted.append(
-                f"[{i}] {r['title']}\nURL: {r['url']}\n{r['snippet']}\n"
-            )
+        results = []
+        for r in raw_results:
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("href", ""),
+                "snippet": r.get("body", ""),
+            })
 
-        return "\n".join(formatted)
+        formatted_data = "\n".join([
+            f"{r['title']} - {r['snippet']}" for r in results if r.get("snippet")
+        ])
+        
+        log.info("web_search_success", num_results=len(results), formatted_len=len(formatted_data))
+
+        return formatted_data
 
     except Exception as e:
         log.error("web_search_failed", query=query, error=str(e))
