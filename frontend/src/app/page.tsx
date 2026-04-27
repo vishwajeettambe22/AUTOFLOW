@@ -1,23 +1,57 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import {
+  Send,
+  Sparkles,
+  Copy,
+  Check,
+  RotateCcw,
+  AlertCircle,
+} from "lucide-react";
+import clsx from "clsx";
 import { useAutoFlow } from "@/hooks/useAutoFlow";
-import { AgentDAG } from "@/components/AgentDAG";
+import { Sidebar } from "@/components/Sidebar";
+import { AgentPipeline } from "@/components/AgentPipeline";
 import { CostTracker } from "@/components/CostTracker";
 import { LogConsole } from "@/components/LogConsole";
 import { MarkdownOutput } from "@/components/MarkdownOutput";
-import clsx from "clsx";
 
 const EXAMPLE_TASKS = [
   "Research top 3 Python web frameworks and write a comparison report",
-  "Explain how transformers work and write a simple self-attention implementation in Python",
-  "Compare React, Vue, and Svelte and create a decision guide for a startup",
+  "Explain how transformers work in AI with architecture details",
+  "Compare React, Vue, and Svelte for a startup tech stack",
+  "Analyze the latest trends in AI agents and autonomous systems",
 ];
 
 export default function HomePage() {
   const [task, setTask] = useState("");
-  const { state, runTask } = useAutoFlow();
+  const [copied, setCopied] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const reportRef = useRef<HTMLDivElement>(null);
+  const { state, history, runTask, resetState, loadRun, fetchHistory } =
+    useAutoFlow();
+
+  const isIdle = state.status === "idle";
   const isRunning = state.status === "running";
+  const isSuccess = state.status === "success";
+  const isFailed = state.status === "failed";
+
+  /* Auto-resize textarea */
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height =
+        Math.min(textareaRef.current.scrollHeight, 160) + "px";
+    }
+  }, [task]);
+
+  /* Scroll to report when done */
+  useEffect(() => {
+    if (isSuccess && reportRef.current) {
+      reportRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [isSuccess]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,161 +59,286 @@ export default function HomePage() {
     await runTask(task.trim());
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+  };
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(state.finalReport);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleNewTask = () => {
+    resetState();
+    setTask("");
+    textareaRef.current?.focus();
+  };
+
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
-      {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-emerald-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">
-              AF
-            </div>
-            <div>
-              <h1 className="text-base font-semibold">AutoFlow</h1>
-              <p className="text-xs text-gray-500">AI Agent Orchestration Platform</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <span className={clsx(
-              "w-2 h-2 rounded-full",
-              isRunning ? "bg-blue-400 animate-pulse" : "bg-emerald-500"
-            )} />
-            {isRunning ? "Running" : "Ready"}
+    <div className="flex h-screen overflow-hidden">
+      {/* Sidebar */}
+      <Sidebar
+        history={history}
+        activeRunId={state.runId}
+        onNewTask={handleNewTask}
+        onSelectRun={loadRun}
+        onRefresh={fetchHistory}
+      />
+
+      {/* Main content */}
+      <main className="flex-1 flex flex-col h-screen overflow-hidden">
+        {/* ─── Centered content area ─── */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-3xl mx-auto px-6 py-8">
+            {/* ─── Idle state: Welcome ─── */}
+            {isIdle && !state.finalReport && (
+              <div className="flex flex-col items-center justify-center min-h-[60vh] animate-fade-in">
+                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[var(--accent)] to-amber-700 flex items-center justify-center mb-6 shadow-lg shadow-[var(--accent)]/10">
+                  <Sparkles className="w-6 h-6 text-white" />
+                </div>
+                <h2 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
+                  What would you like to research?
+                </h2>
+                <p className="text-sm text-[var(--text-tertiary)] mb-8 text-center max-w-md">
+                  AutoFlow uses AI agents to research topics, gather data, and
+                  generate comprehensive reports.
+                </p>
+
+                {/* Example task cards */}
+                <div className="grid grid-cols-2 gap-2.5 w-full max-w-lg">
+                  {EXAMPLE_TASKS.map((t, i) => (
+                    <button
+                      key={i}
+                      onClick={() => setTask(t)}
+                      className={clsx(
+                        "text-left text-xs px-4 py-3 rounded-xl",
+                        "border border-[var(--border-subtle)] hover:border-[var(--border-default)]",
+                        "bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]",
+                        "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
+                        "transition-all duration-200 leading-relaxed"
+                      )}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ─── Running state: Pipeline + progress ─── */}
+            {isRunning && (
+              <div className="space-y-6 animate-fade-in-up">
+                {/* Task display */}
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-subtle)]">
+                  <div className="w-7 h-7 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-medium text-[var(--text-tertiary)]">
+                      You
+                    </span>
+                  </div>
+                  <p className="text-sm text-[var(--text-primary)] leading-relaxed pt-1">
+                    {state.task}
+                  </p>
+                </div>
+
+                {/* Agent pipeline */}
+                <AgentPipeline
+                  statuses={state.agentStatuses}
+                  outputs={state.agentOutputs}
+                />
+
+                {/* Loading indicator */}
+                <div className="flex items-center justify-center py-12">
+                  <div className="flex items-center gap-3">
+                    <div className="flex gap-1">
+                      {[0, 1, 2].map((i) => (
+                        <div
+                          key={i}
+                          className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]"
+                          style={{
+                            animation: `dotPulse 1.4s ease-in-out ${
+                              i * 0.2
+                            }s infinite`,
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-sm text-[var(--text-tertiary)]">
+                      Generating report...
+                    </span>
+                  </div>
+                </div>
+
+                {/* Logs */}
+                <LogConsole logs={state.logs} />
+              </div>
+            )}
+
+            {/* ─── Success state: Report ─── */}
+            {isSuccess && state.finalReport && (
+              <div className="space-y-6 animate-fade-in-up">
+                {/* Task display */}
+                <div className="flex items-start gap-3 p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-subtle)]">
+                  <div className="w-7 h-7 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-medium text-[var(--text-tertiary)]">
+                      You
+                    </span>
+                  </div>
+                  <p className="text-sm text-[var(--text-primary)] leading-relaxed pt-1">
+                    {state.task}
+                  </p>
+                </div>
+
+                {/* Agent pipeline (completed) */}
+                <AgentPipeline
+                  statuses={state.agentStatuses}
+                  outputs={state.agentOutputs}
+                />
+
+                {/* Report */}
+                <div
+                  ref={reportRef}
+                  className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-secondary)] overflow-hidden"
+                >
+                  {/* Report header */}
+                  <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-tertiary)]">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                      <span className="text-xs font-medium text-[var(--text-secondary)]">
+                        Report
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleCopy}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] transition-all"
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            Copy
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Report body */}
+                  <div className="px-6 py-5">
+                    <MarkdownOutput content={state.finalReport} />
+                  </div>
+                </div>
+
+                {/* Cost + Logs */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <CostTracker
+                    usage={state.tokenUsage}
+                    totalCost={state.totalCost}
+                  />
+                  <LogConsole logs={state.logs} />
+                </div>
+              </div>
+            )}
+
+            {/* ─── Failed state ─── */}
+            {isFailed && (
+              <div className="space-y-6 animate-fade-in-up">
+                {/* Task display */}
+                {state.task && (
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-subtle)]">
+                    <div className="w-7 h-7 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <span className="text-xs font-medium text-[var(--text-tertiary)]">
+                        You
+                      </span>
+                    </div>
+                    <p className="text-sm text-[var(--text-primary)] leading-relaxed pt-1">
+                      {state.task}
+                    </p>
+                  </div>
+                )}
+
+                {/* Error display */}
+                <div className="flex items-start gap-3 p-5 rounded-xl border border-red-900/50 bg-red-950/20">
+                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="text-sm font-medium text-red-300 mb-1">
+                      Task failed
+                    </h3>
+                    <p className="text-sm text-red-400/80">
+                      {state.error || "An unknown error occurred."}
+                    </p>
+                    <button
+                      onClick={() => state.task && runTask(state.task)}
+                      className="flex items-center gap-1.5 mt-3 text-xs text-red-300 hover:text-red-200 transition-colors"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      Retry
+                    </button>
+                  </div>
+                </div>
+
+                {/* Logs */}
+                <LogConsole logs={state.logs} />
+              </div>
+            )}
           </div>
         </div>
-      </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-          {/* Left panel — input + agent graph */}
-          <div className="lg:col-span-1 space-y-5">
-
-            {/* Task input */}
-            <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-              <h2 className="text-sm font-medium text-gray-300 mb-3">Task</h2>
-              <form onSubmit={handleSubmit} className="space-y-3">
+        {/* ─── Bottom input bar ─── */}
+        <div className="border-t border-[var(--border-subtle)] bg-[var(--bg-primary)]">
+          <div className="max-w-3xl mx-auto px-6 py-4">
+            <form onSubmit={handleSubmit} className="relative">
+              <div
+                className={clsx(
+                  "flex items-end rounded-xl border transition-all duration-200",
+                  "bg-[var(--bg-secondary)]",
+                  task.trim()
+                    ? "border-[var(--border-active)]"
+                    : "border-[var(--border-default)]",
+                  "focus-within:border-[var(--accent)]"
+                )}
+              >
                 <textarea
+                  ref={textareaRef}
                   value={task}
                   onChange={(e) => setTask(e.target.value)}
-                  placeholder="Describe what you want the agents to do..."
-                  rows={4}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Describe what you want to research..."
                   disabled={isRunning}
+                  rows={1}
                   className={clsx(
-                    "w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-gray-200",
-                    "placeholder-gray-600 resize-none focus:outline-none focus:border-emerald-600",
-                    "transition-colors disabled:opacity-50"
+                    "flex-1 bg-transparent px-4 py-3 text-sm text-[var(--text-primary)]",
+                    "placeholder-[var(--text-muted)] resize-none outline-none",
+                    "disabled:opacity-40 max-h-40"
                   )}
                 />
                 <button
                   type="submit"
                   disabled={!task.trim() || isRunning}
                   className={clsx(
-                    "w-full py-2.5 rounded-lg text-sm font-medium transition-all",
-                    "disabled:opacity-40 disabled:cursor-not-allowed",
-                    isRunning
-                      ? "bg-blue-700 text-blue-200 cursor-not-allowed"
-                      : "bg-emerald-600 hover:bg-emerald-500 text-white active:scale-[0.98]"
+                    "flex-shrink-0 m-1.5 p-2 rounded-lg transition-all duration-200",
+                    "disabled:opacity-30 disabled:cursor-not-allowed",
+                    task.trim() && !isRunning
+                      ? "bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white"
+                      : "bg-[var(--bg-tertiary)] text-[var(--text-muted)]"
                   )}
                 >
-                  {isRunning ? "Running agents..." : "Run AutoFlow"}
+                  <Send className="w-4 h-4" />
                 </button>
-              </form>
-
-              {/* Example tasks */}
-              {state.status === "idle" && (
-                <div className="mt-4 space-y-1.5">
-                  <p className="text-xs text-gray-600 mb-2">Try an example:</p>
-                  {EXAMPLE_TASKS.map((t, i) => (
-                    <button
-                      key={i}
-                      onClick={() => setTask(t)}
-                      className="w-full text-left text-xs text-gray-500 hover:text-gray-300 py-1.5 px-2 rounded hover:bg-gray-800 transition-colors truncate"
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Agent DAG */}
-            {(isRunning || state.status === "success" || state.status === "failed") && (
-              <div className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-                <h2 className="text-sm font-medium text-gray-300 mb-3">Agent Pipeline</h2>
-                <AgentDAG
-                  statuses={state.agentStatuses}
-                  outputs={state.agentOutputs}
-                />
               </div>
-            )}
-
-            {/* Cost tracker */}
-            <CostTracker usage={state.tokenUsage} totalCost={state.totalCost} />
-          </div>
-
-          {/* Right panel — output + logs */}
-          <div className="lg:col-span-2 space-y-5">
-
-            {/* Final report */}
-            {state.finalReport ? (
-              <div className="rounded-xl border border-gray-800 bg-gray-900 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-medium text-gray-300">Output</h2>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-emerald-400 bg-emerald-950 border border-emerald-800 px-2 py-0.5 rounded-full">
-                      Complete
-                    </span>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(state.finalReport)}
-                      className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
-                    >
-                      Copy
-                    </button>
-                  </div>
-                </div>
-                <MarkdownOutput content={state.finalReport} />
-              </div>
-            ) : isRunning ? (
-              <div className="rounded-xl border border-gray-800 bg-gray-900 p-6 flex flex-col items-center justify-center min-h-64 space-y-4">
-                <div className="flex gap-2">
-                  {[0, 1, 2].map((i) => (
-                    <div
-                      key={i}
-                      className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"
-                      style={{ animationDelay: `${i * 0.15}s` }}
-                    />
-                  ))}
-                </div>
-                <p className="text-sm text-gray-500">
-                  Agents are working on your task...
-                </p>
-                {/* Show intermediate outputs */}
-                {Object.entries(state.agentOutputs).map(([agent, output]) => (
-                  <div key={agent} className="w-full bg-gray-800 rounded-lg p-3">
-                    <p className="text-xs text-gray-500 mb-1 capitalize">{agent}</p>
-                    <p className="text-xs text-gray-400 line-clamp-2">{output}</p>
-                  </div>
-                ))}
-              </div>
-            ) : state.status === "failed" ? (
-              <div className="rounded-xl border border-red-900 bg-red-950 p-6">
-                <h3 className="text-sm font-medium text-red-400 mb-2">Run failed</h3>
-                <p className="text-sm text-red-300">{state.error}</p>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-gray-800 bg-gray-900 p-6 flex items-center justify-center min-h-64">
-                <div className="text-center space-y-2">
-                  <div className="text-3xl text-gray-800">⬡</div>
-                  <p className="text-sm text-gray-600">
-                    Enter a task to start the agent pipeline
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Live log console */}
-            <LogConsole logs={state.logs} />
+              <p className="text-[10px] text-[var(--text-muted)] mt-2 text-center">
+                AutoFlow uses Gemini AI to research and generate reports.
+                Results may not always be accurate.
+              </p>
+            </form>
           </div>
         </div>
       </main>

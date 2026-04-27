@@ -146,3 +146,15 @@ async def get_run_by_id(run_id: str):
         from sqlalchemy import select
         result = await session.execute(select(Run).where(Run.id == run_id))
         return result.scalar_one_or_none()
+
+
+async def get_all_runs(limit: int = 50):
+    """Retrieve all runs, most recent first."""
+    factory = get_session_factory()
+    async with factory() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(Run).order_by(Run.created_at.desc()).limit(limit)
+        )
+        return result.scalars().all()
+

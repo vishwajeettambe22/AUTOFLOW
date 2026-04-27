@@ -13,7 +13,7 @@ from core.state import AutoFlowState, AgentStatus
 from core import events
 from graph.workflow import workflow
 from memory.redis_store import set_run_status, get_run_status, set_run_state
-from memory.postgres_store import init_db, save_run, get_run_by_id
+from memory.postgres_store import init_db, save_run, get_run_by_id, get_all_runs
 from core.llm import _is_quota_error
 
 log = structlog.get_logger()
@@ -208,6 +208,28 @@ async def health():
 
 
 # ─── WebSocket endpoint ────────────────────────────────────────────────────────
+
+@app.get("/api/v1/runs")
+async def list_runs():
+    """Return all past runs, most recent first."""
+    runs = await get_all_runs()
+    return {
+        "runs": [
+            {
+                "run_id": r.id,
+                "user_task": r.user_task,
+                "status": r.status,
+                "final_report": r.final_report or "",
+                "total_cost_usd": round(r.total_cost_usd or 0, 6),
+                "total_input_tokens": r.total_input_tokens or 0,
+                "total_output_tokens": r.total_output_tokens or 0,
+                "created_at": str(r.created_at) if r.created_at else None,
+                "completed_at": str(r.completed_at) if r.completed_at else None,
+            }
+            for r in runs
+        ]
+    }
+
 
 @app.websocket("/ws/{run_id}")
 async def websocket_endpoint(websocket: WebSocket, run_id: str):
